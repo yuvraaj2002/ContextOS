@@ -1,0 +1,12 @@
+[project]
+name = "contextos"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "count-tokens>=0.8.3",
+    "ollama>=0.6.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
