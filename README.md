@@ -1,3 +1,15 @@
+# ContextOS v0.1.0
+
+![ContextOS](ContextOS.png)
+
+## Product release
+
+ContextOS is an open-source context engineering runtime that gives local LLM conversations persistent, relevant memory beyond the context window.
+
+This first release establishes the foundation: local Ollama conversations, structured memory extraction, context-window management, and in-memory memory injection. We will build toward persistent storage, intelligent retrieval, evaluation, and production deployment.
+
+---
+
 Once we complete the retrieval layer, ContextOS will have its first working long-term memory system. But that is only the foundation.
 
 For your goal of moving from 16 LPA toward 30–40 LPA AI engineering roles, I'd develop ContextOS into a production-grade context engineering runtime.
