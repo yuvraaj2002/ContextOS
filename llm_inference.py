@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import threading
 from dataclasses import dataclass
 from typing import Callable, TypedDict
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from count_tokens import count
-from rich import print as rprint
-from rich.panel import Panel
 
 
 class Message(TypedDict):
@@ -41,22 +38,17 @@ class LLMInference:
         self,
         config: InferenceConfig | None = None,
         opener: Callable[..., object] = urlopen,
+        on_messages_evicted: Callable[[list[Message]], None] | None = None,
     ) -> None:
         self.config = config or InferenceConfig()
         self._opener = opener
-        self.memory_extractions: list[object] = []
+        self._on_messages_evicted = on_messages_evicted
 
     def get_response(self, history: list[Message]) -> str:
-        memory = "\n".join(
-            extraction.model_dump_json() for extraction in self.memory_extractions
-        )
-        messages, evicted_messages = self._prepare_messages(history, memory)
+        messages, evicted_messages = self._prepare_messages(history)
         if evicted_messages:
-            threading.Thread(
-                target=self._extract_memories,
-                args=(evicted_messages,),
-                daemon=True,
-            ).start()
+            if self._on_messages_evicted:
+                self._on_messages_evicted(evicted_messages)
         result = self._post_json(
             self.config.ollama_url,
             {
@@ -109,22 +101,6 @@ class LLMInference:
             evicted_messages.extend(remaining_history[:2])
             del remaining_history[:2]
             print("Context limit exceeded. Evicted the oldest user-assistant interaction.")
-
-    def _extract_memories(self, messages: list[Message]) -> None:
-        from memory_extraction import extract_memories
-
-        try:
-            extraction = extract_memories(messages, self.config.model)
-            self.memory_extractions.append(extraction)
-            rprint(
-                Panel(
-                    extraction.model_dump_json(indent=2),
-                    title="Memory Extraction Completed",
-                    border_style="green",
-                )
-            )
-        except Exception as error:
-            rprint(f"[red]Memory extraction failed:[/red] {error}")
 
     @staticmethod
     def _render_chat_prompt(messages: list[Message]) -> str:

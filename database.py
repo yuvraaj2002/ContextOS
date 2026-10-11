@@ -6,6 +6,14 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
+from schemas.conversations import CONVERSATIONS_SCHEMA_SQL
+from schemas.memories import MEMORIES_SCHEMA_SQL
+from schemas.messages import (
+    ADD_MESSAGE_ACTIVITY_COLUMN_SQL,
+    MESSAGE_ACTIVITY_INDEX_SQL,
+    MESSAGES_SCHEMA_SQL,
+)
+
 
 Role = Literal["system", "user", "assistant"]
 
@@ -19,34 +27,11 @@ class ConversationStore:
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id TEXT PRIMARY KEY,
-                    created_at_ms INTEGER NOT NULL,
-                    updated_at_ms INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY,
-                    conversation_id TEXT NOT NULL
-                        REFERENCES conversations(id) ON DELETE CASCADE,
-                    turn_id TEXT NOT NULL,
-                    sequence_no INTEGER NOT NULL,
-                    role TEXT NOT NULL
-                        CHECK (role IN ('system', 'user', 'assistant')),
-                    content TEXT NOT NULL,
-                    created_at_ms INTEGER NOT NULL,
-                    UNIQUE (conversation_id, sequence_no)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_messages_conversation_sequence
-                    ON messages(conversation_id, sequence_no);
-
-                CREATE INDEX IF NOT EXISTS idx_messages_conversation_turn
-                    ON messages(conversation_id, turn_id);
-                """
-            )
+            connection.executescript(CONVERSATIONS_SCHEMA_SQL)
+            connection.executescript(MESSAGES_SCHEMA_SQL)
+            self._add_message_activity_column_if_missing(connection)
+            connection.executescript(MESSAGE_ACTIVITY_INDEX_SQL)
+            connection.executescript(MEMORIES_SCHEMA_SQL)
 
     def create_conversation(self) -> str:
         conversation_id = str(uuid.uuid4())
@@ -116,6 +101,62 @@ class ConversationStore:
                 (conversation_id,),
             ).fetchall()
         return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+    def get_active_messages(self, conversation_id: str) -> list[dict[str, object]]:
+        """Return active messages in order, including their persistent IDs."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, role, content
+                FROM messages
+                WHERE conversation_id = ? AND is_active = 1
+                ORDER BY sequence_no ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [
+            {"id": int(row["id"]), "role": row["role"], "content": row["content"]}
+            for row in rows
+        ]
+
+    def mark_messages_inactive(
+        self, conversation_id: str, message_ids: list[int]
+    ) -> int:
+        """Mark the specified active messages inactive within one conversation."""
+        if not message_ids:
+            return 0
+
+        placeholders = ", ".join("?" for _ in message_ids)
+        now_ms = _now_ms()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE messages
+                SET is_active = 0
+                WHERE conversation_id = ?
+                  AND is_active = 1
+                  AND id IN ({placeholders})
+                """,
+                (conversation_id, *message_ids),
+            )
+            if cursor.rowcount:
+                connection.execute(
+                    """
+                    UPDATE conversations
+                    SET updated_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (now_ms, conversation_id),
+                )
+            return cursor.rowcount
+
+    @staticmethod
+    def _add_message_activity_column_if_missing(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(messages)")
+        }
+        if "is_active" not in columns:
+            connection.execute(ADD_MESSAGE_ACTIVITY_COLUMN_SQL)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
