@@ -1,23 +1,22 @@
-import time
+from database import ConversationStore, new_turn_id
 from llm_inference import LLMInference
 
-# Data structure for conversational history
-conversational_history = []
+store = ConversationStore()
+store.initialize()
+conversation_id = store.create_conversation()
 inference = LLMInference()
-
-
 
 while True:
     user_input = input("Enter your message : ")
     if user_input == "exit":
         break
-    # Adding the user message to conversational history
-    conversational_history.append({'role': 'user', 'content': user_input, 'time_stamp': time.time()})
 
-    # Adding the assistant message
+    turn_id = new_turn_id()
+    store.add_message(conversation_id, turn_id, "user", user_input)
+
+    conversational_history = store.get_messages(conversation_id)
     llm_response = inference.get_response(history=conversational_history)
-    conversational_history.append({'role': 'assistant', 'content': llm_response, 'time_stamp': time.time()})
-    print(conversational_history)
+    store.add_message(conversation_id, turn_id, "assistant", llm_response)
+    print(store.get_messages(conversation_id))
 
-# Complete conversational history
-print(conversational_history)
+print(store.get_messages(conversation_id))
